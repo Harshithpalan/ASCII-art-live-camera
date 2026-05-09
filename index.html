@@ -1,0 +1,962 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ASCII·CAM — Live Terminal Vision</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&display=swap');
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  /* Phosphor amber — the ONE unforgettable thing */
+  --amber:      #ffb000;
+  --amber-dim:  #7a5200;
+  --amber-glow: rgba(255,176,0,0.15);
+  --amber-faint:rgba(255,176,0,0.05);
+
+  --bg:    #080600;
+  --panel: #0c0900;
+  --border:#241a00;
+  --border2:#3a2a00;
+  --muted: #4a3800;
+  --text:  #d4a000;
+  --bright:#ffcc33;
+
+  /* Color mode palette */
+  --mode-color: var(--amber);
+}
+
+html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+body {
+  font-family: 'Share Tech Mono', monospace;
+  color: var(--amber);
+  display: grid;
+  grid-template-rows: 44px 1fr 32px;
+  height: 100vh;
+}
+
+/* ── CRT phosphor bloom ──────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: radial-gradient(ellipse 80% 70% at 50% 45%,
+    transparent 40%,
+    rgba(0,0,0,0.55) 100%
+  );
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ── Scanlines ───────────────────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent, transparent 2px,
+    rgba(0,0,0,0.25) 2px, rgba(0,0,0,0.25) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── HEADER ──────────────────────────────────────────────────── */
+header {
+  position: relative; z-index: 100;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.2rem;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border2);
+}
+
+.logo {
+  font-family: 'VT323', monospace;
+  font-size: 1.6rem;
+  letter-spacing: 0.1em;
+  color: var(--amber);
+  text-shadow: 0 0 18px var(--amber), 0 0 40px rgba(255,176,0,0.4);
+  white-space: nowrap;
+}
+
+/* Scrolling marquee */
+.marquee-wrap {
+  overflow: hidden;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  color: var(--amber-dim);
+  white-space: nowrap;
+}
+.marquee-inner {
+  display: inline-block;
+  animation: marquee 30s linear infinite;
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.header-right {
+  display: flex; align-items: center; gap: 10px;
+}
+
+.pill {
+  font-size: 0.52rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 1px;
+  color: var(--muted);
+  display: flex; align-items: center; gap: 5px;
+  transition: all 0.3s;
+}
+.pill .d { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); transition: all 0.3s; }
+.pill.on { color: var(--amber); border-color: var(--amber-dim); }
+.pill.on .d { background: var(--amber); box-shadow: 0 0 8px var(--amber); animation: blink-dot 1.4s infinite; }
+@keyframes blink-dot { 0%,100%{opacity:1}50%{opacity:0.2} }
+
+/* ── BODY ────────────────────────────────────────────────────── */
+.body {
+  position: relative; z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr 240px;
+  overflow: hidden;
+}
+
+/* ── ASCII DISPLAY ───────────────────────────────────────────── */
+.ascii-wrap {
+  position: relative;
+  background: var(--bg);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-right: 1px solid var(--border2);
+}
+
+/* Phosphor inner glow */
+.ascii-wrap::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 70% 60% at 50% 50%, var(--amber-faint) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+#ascii-out {
+  position: relative;
+  z-index: 1;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 8px;
+  line-height: 1.0;
+  letter-spacing: 0em;
+  white-space: pre;
+  color: var(--mode-color);
+  text-shadow: 0 0 4px var(--mode-color);
+  transition: color 0.4s, text-shadow 0.4s;
+  /* prevent selection */
+  user-select: none;
+  -webkit-user-select: none;
+  overflow: hidden;
+}
+
+/* Hidden video + canvas */
+video { display: none; }
+canvas { display: none; }
+
+/* ── Corner labels ───────────────────────────────────────────── */
+.corner-lbl {
+  position: absolute;
+  font-size: 0.46rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+  z-index: 5;
+  pointer-events: none;
+}
+.corner-lbl.tl { top: 10px; left: 12px; }
+.corner-lbl.tr { top: 10px; right: 12px; }
+.corner-lbl.bl { bottom: 10px; left: 12px; }
+.corner-lbl.br { bottom: 10px; right: 12px; }
+
+/* Corner brackets */
+.cbr { position: absolute; width: 14px; height: 14px; z-index: 5; }
+.cbr.tl { top: 8px;  left: 8px;  border-top: 1px solid var(--border2); border-left: 1px solid var(--border2); }
+.cbr.tr { top: 8px;  right: 8px; border-top: 1px solid var(--border2); border-right: 1px solid var(--border2); }
+.cbr.bl { bottom: 8px; left: 8px;  border-bottom: 1px solid var(--border2); border-left: 1px solid var(--border2); }
+.cbr.br { bottom: 8px; right: 8px; border-bottom: 1px solid var(--border2); border-right: 1px solid var(--border2); }
+
+/* Loading overlay */
+#loading {
+  position: absolute; inset: 0;
+  background: var(--bg);
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 1.2rem; z-index: 20;
+  transition: opacity 0.6s;
+}
+#loading.gone { opacity: 0; pointer-events: none; }
+
+.boot-text {
+  font-family: 'VT323', monospace;
+  font-size: 2.5rem;
+  letter-spacing: 0.2em;
+  color: var(--amber);
+  text-shadow: 0 0 30px var(--amber);
+  animation: boot-flicker 2s ease-in-out infinite;
+}
+@keyframes boot-flicker { 0%,18%,20%,100%{opacity:1}19%{opacity:0.4} }
+
+.boot-msg {
+  font-size: 0.6rem;
+  letter-spacing: 0.16em;
+  color: var(--muted);
+}
+.boot-bar { width: 200px; height: 1px; background: var(--border); overflow: hidden; }
+.boot-fill { height: 100%; background: var(--amber); box-shadow: 0 0 6px var(--amber); width: 0%; animation: bfill 2.2s ease forwards; }
+@keyframes bfill { to { width: 100%; } }
+
+/* Cursor blink */
+.cursor { display: inline-block; animation: cur 0.8s step-end infinite; color: var(--amber); }
+@keyframes cur { 0%,100%{opacity:1}50%{opacity:0} }
+
+/* ── RIGHT PANEL ─────────────────────────────────────────────── */
+.panel {
+  background: var(--panel);
+  display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden;
+  border-left: 1px solid var(--border2);
+}
+.panel::-webkit-scrollbar { width: 3px; }
+.panel::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.psec {
+  padding: 0.9rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.ptitle {
+  font-size: 0.5rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+  display: flex; align-items: center; gap: 6px;
+}
+.ptitle::before { content: '>'; color: var(--amber-dim); }
+
+/* Char set buttons */
+.charset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.cs-btn {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 6px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex; flex-direction: column; gap: 2px;
+  text-align: left;
+}
+.cs-btn .cs-preview {
+  font-size: 0.65rem;
+  color: var(--amber-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cs-btn:hover, .cs-btn.active {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: var(--amber-glow);
+}
+.cs-btn.active .cs-preview { color: var(--bright); }
+
+/* Color mode */
+.color-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+}
+
+.cm-btn {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.48rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 4px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.cm-btn .cm-swatch {
+  width: 16px; height: 8px;
+  border-radius: 1px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.cm-btn:hover { border-color: var(--amber-dim); color: var(--text); }
+.cm-btn.active { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+
+/* Sliders */
+.slider-row {
+  display: flex; flex-direction: column; gap: 5px;
+  margin-bottom: 0.65rem;
+}
+.slider-row:last-child { margin-bottom: 0; }
+
+.sl-top { display: flex; justify-content: space-between; align-items: baseline; }
+.sl-name { font-size: 0.5rem; letter-spacing: 0.1em; color: var(--text); }
+.sl-val  { font-size: 0.5rem; letter-spacing: 0.06em; color: var(--amber); }
+
+input[type=range] {
+  -webkit-appearance: none;
+  width: 100%; height: 1px;
+  background: var(--border2);
+  outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px; height: 10px;
+  background: var(--amber);
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 0 6px var(--amber);
+}
+
+/* Toggle row */
+.toggle-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 5px;
+}
+
+.tog-btn {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.48rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  padding: 7px 6px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 4px;
+}
+.tog-btn:hover { border-color: var(--text); color: var(--text); }
+.tog-btn.on { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+
+/* Stats */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.stat-box {
+  background: #0f0c00;
+  border: 1px solid var(--border);
+  padding: 8px;
+  border-radius: 1px;
+}
+.stat-lbl { font-size: 0.42rem; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+.stat-val { font-size: 0.9rem; font-family: 'VT323', monospace; color: var(--amber); margin-top: 1px; letter-spacing: 0.05em; }
+
+/* Export section */
+.export-stack { display: flex; flex-direction: column; gap: 6px; }
+.exp-btn {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 0.52rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--border2);
+  background: transparent;
+  color: var(--muted);
+  padding: 9px 12px;
+  border-radius: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+  display: flex; align-items: center; gap: 8px;
+}
+.exp-btn:hover { border-color: var(--amber); color: var(--amber); background: var(--amber-glow); }
+.exp-btn.primary { border-color: var(--amber-dim); color: var(--text); }
+.exp-btn.primary:hover { background: rgba(255,176,0,0.2); }
+
+/* ── FOOTER ──────────────────────────────────────────────────── */
+footer {
+  position: relative; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 1.2rem;
+  background: var(--panel);
+  border-top: 1px solid var(--border2);
+  font-size: 0.46rem;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.f-item { display: flex; align-items: center; gap: 5px; }
+.f-amber { color: var(--amber); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">ASCII·CAM<span class="cursor">_</span></div>
+  <div class="marquee-wrap">
+    <span class="marquee-inner">
+      TERMINAL VISION SYSTEM v2.4 · LIVE ASCII RENDERING · PIXEL DIFFUSION ENGINE · CHARACTER SET MAPPING · REAL-TIME PHOSPHOR OUTPUT · 1984 COMPATIBLE · TERMINAL VISION SYSTEM v2.4 · LIVE ASCII RENDERING · PIXEL DIFFUSION ENGINE · CHARACTER SET MAPPING · REAL-TIME PHOSPHOR OUTPUT · 1984 COMPATIBLE ·&nbsp;
+    </span>
+  </div>
+  <div class="header-right">
+    <div class="pill" id="pill-cam"><div class="d"></div><span>OFFLINE</span></div>
+    <div class="pill" id="pill-fps"><div class="d"></div><span id="pill-fps-text">0 FPS</span></div>
+  </div>
+</header>
+
+<!-- BODY -->
+<div class="body">
+
+  <!-- ASCII output area -->
+  <div class="ascii-wrap" id="ascii-wrap">
+    <div class="cbr tl"></div><div class="cbr tr"></div>
+    <div class="cbr bl"></div><div class="cbr br"></div>
+
+    <div class="corner-lbl tl">ASCII·CAM · v2.4</div>
+    <div class="corner-lbl tr" id="lbl-tr">COLS: – · ROWS: –</div>
+    <div class="corner-lbl bl" id="lbl-bl">CHARSET: –</div>
+    <div class="corner-lbl br" id="lbl-br">COLOR: –</div>
+
+    <!-- Hidden webcam elements -->
+    <video id="video" autoplay muted playsinline></video>
+    <canvas id="sample-canvas"></canvas>
+
+    <!-- The ASCII output -->
+    <pre id="ascii-out"></pre>
+
+    <!-- Boot overlay -->
+    <div id="loading">
+      <div class="boot-text">ASCII·CAM</div>
+      <div class="boot-msg" id="boot-msg">INITIALIZING TERMINAL…<span class="cursor">_</span></div>
+      <div class="boot-bar"><div class="boot-fill"></div></div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="panel">
+
+    <!-- Character sets -->
+    <div class="psec">
+      <div class="ptitle">Character Set</div>
+      <div class="charset-grid" id="charset-grid">
+        <button class="cs-btn active" data-set="standard">
+          <span>Standard</span>
+          <span class="cs-preview">@#S%?*+;:,. </span>
+        </button>
+        <button class="cs-btn" data-set="dense">
+          <span>Dense</span>
+          <span class="cs-preview">█▓▒░▪·  </span>
+        </button>
+        <button class="cs-btn" data-set="minimal">
+          <span>Minimal</span>
+          <span class="cs-preview">@:.  </span>
+        </button>
+        <button class="cs-btn" data-set="binary">
+          <span>Binary</span>
+          <span class="cs-preview">01010110</span>
+        </button>
+        <button class="cs-btn" data-set="braille">
+          <span>Braille</span>
+          <span class="cs-preview">⣿⣷⣶⣤⡀ </span>
+        </button>
+        <button class="cs-btn" data-set="matrix">
+          <span>Matrix</span>
+          <span class="cs-preview">ｦｧｨｩｪｫ</span>
+        </button>
+        <button class="cs-btn" data-set="blocks">
+          <span>Blocks</span>
+          <span class="cs-preview">██▄▌▐▀  </span>
+        </button>
+        <button class="cs-btn" data-set="classic">
+          <span>Classic</span>
+          <span class="cs-preview">Ww*+-:. </span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Color mode -->
+    <div class="psec">
+      <div class="ptitle">Color Mode</div>
+      <div class="color-modes" id="color-modes">
+        <button class="cm-btn active" data-mode="amber">
+          <div class="cm-swatch" style="background:#ffb000"></div>
+          <span>Amber</span>
+        </button>
+        <button class="cm-btn" data-mode="green">
+          <div class="cm-swatch" style="background:#00ff41"></div>
+          <span>Green</span>
+        </button>
+        <button class="cm-btn" data-mode="cyan">
+          <div class="cm-swatch" style="background:#00ffe5"></div>
+          <span>Cyan</span>
+        </button>
+        <button class="cm-btn" data-mode="white">
+          <div class="cm-swatch" style="background:#ffffff"></div>
+          <span>White</span>
+        </button>
+        <button class="cm-btn" data-mode="color">
+          <div class="cm-swatch" style="background:linear-gradient(90deg,#f00,#0f0,#00f)"></div>
+          <span>Color</span>
+        </button>
+        <button class="cm-btn" data-mode="heat">
+          <div class="cm-swatch" style="background:linear-gradient(90deg,#000,#f00,#ff0,#fff)"></div>
+          <span>Heat</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Adjustments -->
+    <div class="psec">
+      <div class="ptitle">Adjustments</div>
+
+      <div class="slider-row">
+        <div class="sl-top"><span class="sl-name">Resolution</span><span class="sl-val" id="sv-res">100</span></div>
+        <input type="range" id="sl-res" min="40" max="220" value="100">
+      </div>
+      <div class="slider-row">
+        <div class="sl-top"><span class="sl-name">Brightness</span><span class="sl-val" id="sv-bright">50</span></div>
+        <input type="range" id="sl-bright" min="0" max="100" value="50">
+      </div>
+      <div class="slider-row">
+        <div class="sl-top"><span class="sl-name">Contrast</span><span class="sl-val" id="sv-contrast">50</span></div>
+        <input type="range" id="sl-contrast" min="0" max="100" value="50">
+      </div>
+      <div class="slider-row">
+        <div class="sl-top"><span class="sl-name">Font Size</span><span class="sl-val" id="sv-fsize">8px</span></div>
+        <input type="range" id="sl-fsize" min="5" max="16" value="8">
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="psec">
+      <div class="ptitle">Controls</div>
+      <div class="toggle-row">
+        <button class="tog-btn on" id="btn-mirror">↔ Mirror</button>
+        <button class="tog-btn" id="btn-invert">⊙ Invert</button>
+        <button class="tog-btn" id="btn-pause">⏸ Pause</button>
+        <button class="tog-btn" id="btn-edge">◈ Edge</button>
+        <button class="tog-btn" id="btn-glow">✦ Glow</button>
+        <button class="tog-btn" id="btn-dither">▒ Dither</button>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="psec">
+      <div class="ptitle">Terminal Stats</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-lbl">Columns</div><div class="stat-val" id="st-cols">–</div></div>
+        <div class="stat-box"><div class="stat-lbl">Rows</div><div class="stat-val" id="st-rows">–</div></div>
+        <div class="stat-box"><div class="stat-lbl">Chars/Frame</div><div class="stat-val" id="st-chars">–</div></div>
+        <div class="stat-box"><div class="stat-lbl">Render FPS</div><div class="stat-val" id="st-fps">–</div></div>
+      </div>
+    </div>
+
+    <!-- Export -->
+    <div class="psec">
+      <div class="ptitle">Export</div>
+      <div class="export-stack">
+        <button class="exp-btn primary" id="exp-png">📷 Save as PNG Image</button>
+        <button class="exp-btn" id="exp-txt">📄 Save as .TXT File</button>
+        <button class="exp-btn" id="exp-copy">⎘ Copy ASCII to Clipboard</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <div class="f-item"><span>ASCII·CAM</span><span class="f-amber">·</span><span>TERMINAL VISION SYSTEM</span></div>
+  <div class="f-item"><span id="f-clock">--:--:--</span></div>
+  <div class="f-item"><span id="f-charset">CHARSET: STANDARD</span><span class="f-amber">·</span><span id="f-mode">MODE: AMBER</span></div>
+</footer>
+
+<script>
+// ── Character sets ─────────────────────────────────────────────────────────────
+const CHARSETS = {
+  standard: '@#S%?*+;:,. '.split(''),
+  dense:    '█▓▒░▪▫·  '.split(''),
+  minimal:  '@:.  '.split(''),
+  binary:   '10 '.split(''),
+  braille:  '⣿⣾⣽⣻⢿⡿⣷⣶⣤⣀⠀'.split(''),
+  matrix:   'ｦｧｨｩｪｫｬｭｮｯｰｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂ０１２３４５６'.split(''),
+  blocks:   '█▉▊▋▌▍▎▏ '.split(''),
+  classic:  'Ww*+-:. '.split(''),
+};
+
+// ── Color modes ───────────────────────────────────────────────────────────────
+const COLORS = {
+  amber: () => `rgba(255,176,0,1)`,
+  green: () => `rgba(57,255,20,1)`,
+  cyan:  () => `rgba(0,255,229,1)`,
+  white: () => `rgba(220,220,220,1)`,
+  color: (r, g, b) => `rgb(${r},${g},${b})`,
+  heat:  (bright) => {
+    // black → red → yellow → white
+    if (bright < 0.33) return `rgb(${Math.round(bright/0.33*200)},0,0)`;
+    if (bright < 0.66) return `rgb(200,${Math.round((bright-0.33)/0.33*180)},0)`;
+    return `rgb(220,${Math.round((bright-0.66)/0.34*220)+80},${Math.round((bright-0.66)/0.34*220)})`;
+  }
+};
+
+// ── State ──────────────────────────────────────────────────────────────────────
+const cfg = {
+  charset: 'standard',
+  colorMode: 'amber',
+  resolution: 100,
+  brightness: 50,
+  contrast: 50,
+  fontSize: 8,
+  mirrored: true,
+  inverted: false,
+  paused: false,
+  edge: false,
+  glow: true,
+  dither: false,
+};
+
+const perf = { fps: 0, frames: 0, last: performance.now() };
+let currentASCII = '';
+
+// ── Elements ───────────────────────────────────────────────────────────────────
+const video    = document.getElementById('video');
+const canvas   = document.getElementById('sample-canvas');
+const ctx      = canvas.getContext('2d', { willReadFrequently: true });
+const asciiOut = document.getElementById('ascii-out');
+const asciiWrap= document.getElementById('ascii-wrap');
+
+// ── Resize to fit display area ─────────────────────────────────────────────────
+function getDisplayDims() {
+  const rect = asciiWrap.getBoundingClientRect();
+  return { W: rect.width, H: rect.height };
+}
+
+// ── Main render loop ───────────────────────────────────────────────────────────
+function renderFrame() {
+  requestAnimationFrame(renderFrame);
+
+  // FPS
+  perf.frames++;
+  const now = performance.now();
+  if (now - perf.last >= 1000) {
+    perf.fps = perf.frames; perf.frames = 0; perf.last = now;
+    document.getElementById('st-fps').textContent = perf.fps;
+    document.getElementById('pill-fps-text').textContent = `${perf.fps} FPS`;
+  }
+
+  if (cfg.paused || video.readyState < 2) return;
+
+  const { W, H } = getDisplayDims();
+  const chars   = CHARSETS[cfg.charset];
+  const fontSize = cfg.fontSize;
+  const charW   = fontSize * 0.6;   // monospace ratio
+  const charH   = fontSize * 1.0;
+
+  const cols = Math.floor((cfg.resolution / 100) * (W / charW));
+  const rows = Math.floor((cols / (W / charW)) * (H / charH));
+
+  canvas.width  = cols;
+  canvas.height = rows;
+
+  // Draw video to sample canvas
+  ctx.save();
+  if (cfg.mirrored) { ctx.translate(cols, 0); ctx.scale(-1, 1); }
+
+  // Brightness / contrast filter
+  const b = (cfg.brightness - 50) * 2; // -100 to +100
+  const c = (cfg.contrast - 50) * 2;
+  ctx.filter = `brightness(${100 + b}%) contrast(${100 + c}%)`;
+  ctx.drawImage(video, 0, 0, cols, rows);
+  ctx.filter = 'none';
+  ctx.restore();
+
+  let imgData = ctx.getImageData(0, 0, cols, rows);
+  let data = imgData.data;
+
+  // Edge detection (Sobel-lite)
+  if (cfg.edge) {
+    data = applyEdge(data, cols, rows);
+  }
+
+  // Build ASCII string
+  let lines = [];
+  for (let row = 0; row < rows; row++) {
+    let line = '';
+    for (let col = 0; col < cols; col++) {
+      const i = (row * cols + col) * 4;
+      let r = data[i], g = data[i+1], b2 = data[i+2];
+      let bright = (0.299*r + 0.587*g + 0.114*b2) / 255;
+      if (cfg.inverted) bright = 1 - bright;
+
+      // Dithering (Floyd–Steinberg simplified — just adds noise)
+      if (cfg.dither && Math.random() < 0.15) bright = Math.min(1, bright + (Math.random()-0.5) * 0.3);
+
+      const idx = Math.floor(bright * (chars.length - 1));
+      line += chars[Math.max(0, Math.min(chars.length-1, idx))];
+    }
+    lines.push(line);
+  }
+  currentASCII = lines.join('\n');
+
+  // Color mode
+  renderColored(data, cols, rows, chars, currentASCII);
+
+  // Update stats
+  document.getElementById('st-cols').textContent = cols;
+  document.getElementById('st-rows').textContent = rows;
+  document.getElementById('st-chars').textContent = (cols * rows).toLocaleString();
+  document.getElementById('lbl-tr').textContent = `COLS: ${cols} · ROWS: ${rows}`;
+  document.getElementById('lbl-bl').textContent = `CHARSET: ${cfg.charset.toUpperCase()}`;
+  document.getElementById('lbl-br').textContent = `COLOR: ${cfg.colorMode.toUpperCase()}`;
+}
+
+// ── Colored rendering ──────────────────────────────────────────────────────────
+function renderColored(data, cols, rows, chars, ascii) {
+  if (cfg.colorMode === 'amber' || cfg.colorMode === 'green' || cfg.colorMode === 'cyan' || cfg.colorMode === 'white') {
+    // Single color — just set CSS color, dump plain text
+    const c = cfg.colorMode === 'amber' ? '#ffb000' :
+              cfg.colorMode === 'green'  ? '#39ff14' :
+              cfg.colorMode === 'cyan'   ? '#00ffe5' : '#dcdcdc';
+    asciiOut.style.color = c;
+    asciiOut.style.textShadow = cfg.glow ? `0 0 4px ${c}` : 'none';
+    asciiOut.textContent = ascii;
+    return;
+  }
+
+  // Color / Heat — build spans per character (performance: chunk by line)
+  let html = '';
+  let charIdx = 0;
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      const i = (row * cols + col) * 4;
+      const r = data[i], g = data[i+1], b2 = data[i+2];
+      const bright = (0.299*r + 0.587*g + 0.114*b2) / 255;
+
+      let color;
+      if (cfg.colorMode === 'color') {
+        color = `rgb(${r},${g},${b2})`;
+      } else {
+        color = COLORS.heat(bright);
+      }
+
+      const ch = currentASCII[charIdx] || ' ';
+      const glow = cfg.glow ? ` text-shadow:0 0 3px ${color};` : '';
+      html += `<span style="color:${color};${glow}">${ch}</span>`;
+      charIdx++;
+    }
+    html += '\n';
+    charIdx++; // skip newline char
+  }
+  asciiOut.innerHTML = html;
+}
+
+// ── Edge detection (simple horizontal+vertical diff) ──────────────────────────
+function applyEdge(data, cols, rows) {
+  const out = new Uint8ClampedArray(data.length);
+  const gray = new Float32Array(cols * rows);
+  for (let i = 0; i < cols * rows; i++) {
+    gray[i] = (data[i*4]*0.299 + data[i*4+1]*0.587 + data[i*4+2]*0.114) / 255;
+  }
+  for (let y = 1; y < rows-1; y++) {
+    for (let x = 1; x < cols-1; x++) {
+      const gx = gray[y*cols+x+1] - gray[y*cols+x-1];
+      const gy = gray[(y+1)*cols+x] - gray[(y-1)*cols+x];
+      const mag = Math.min(1, Math.sqrt(gx*gx + gy*gy) * 6);
+      const v = Math.round(mag * 255);
+      const idx = (y*cols+x)*4;
+      out[idx]=v; out[idx+1]=v; out[idx+2]=v; out[idx+3]=255;
+    }
+  }
+  return out;
+}
+
+// ── Camera init ───────────────────────────────────────────────────────────────
+async function startCamera() {
+  document.getElementById('boot-msg').innerHTML = 'REQUESTING CAMERA ACCESS…<span class="cursor">_</span>';
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
+  video.srcObject = stream;
+  await new Promise(r => video.onloadedmetadata = r);
+  video.play();
+
+  document.getElementById('boot-msg').innerHTML = 'CALIBRATING ASCII ENGINE…<span class="cursor">_</span>';
+  await new Promise(r => setTimeout(r, 800));
+
+  document.getElementById('loading').classList.add('gone');
+  document.getElementById('pill-cam').classList.add('on');
+  document.getElementById('pill-cam').querySelector('span').textContent = 'LIVE';
+
+  requestAnimationFrame(renderFrame);
+  setInterval(() => {
+    document.getElementById('f-clock').textContent =
+      new Date().toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }, 1000);
+}
+
+// ── UI: charset ───────────────────────────────────────────────────────────────
+document.getElementById('charset-grid').addEventListener('click', e => {
+  const btn = e.target.closest('.cs-btn');
+  if (!btn) return;
+  document.querySelectorAll('.cs-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  cfg.charset = btn.dataset.set;
+  document.getElementById('f-charset').textContent = `CHARSET: ${cfg.charset.toUpperCase()}`;
+});
+
+// ── UI: color mode ────────────────────────────────────────────────────────────
+document.getElementById('color-modes').addEventListener('click', e => {
+  const btn = e.target.closest('.cm-btn');
+  if (!btn) return;
+  document.querySelectorAll('.cm-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  cfg.colorMode = btn.dataset.mode;
+  document.getElementById('f-mode').textContent = `MODE: ${cfg.colorMode.toUpperCase()}`;
+});
+
+// ── UI: sliders ───────────────────────────────────────────────────────────────
+document.getElementById('sl-res').addEventListener('input', function() {
+  cfg.resolution = +this.value;
+  document.getElementById('sv-res').textContent = this.value;
+});
+document.getElementById('sl-bright').addEventListener('input', function() {
+  cfg.brightness = +this.value;
+  document.getElementById('sv-bright').textContent = this.value;
+});
+document.getElementById('sl-contrast').addEventListener('input', function() {
+  cfg.contrast = +this.value;
+  document.getElementById('sv-contrast').textContent = this.value;
+});
+document.getElementById('sl-fsize').addEventListener('input', function() {
+  cfg.fontSize = +this.value;
+  asciiOut.style.fontSize = `${this.value}px`;
+  asciiOut.style.lineHeight = `${Math.round(this.value)}px`;
+  document.getElementById('sv-fsize').textContent = `${this.value}px`;
+});
+
+// ── UI: toggles ───────────────────────────────────────────────────────────────
+function mkToggle(id, key, label, offLabel) {
+  const btn = document.getElementById(id);
+  btn.addEventListener('click', () => {
+    cfg[key] = !cfg[key];
+    btn.classList.toggle('on', cfg[key]);
+    if (offLabel) btn.textContent = cfg[key] ? label : offLabel;
+  });
+}
+mkToggle('btn-mirror', 'mirrored', '↔ Mirror', '↔ Mirror');
+mkToggle('btn-invert', 'inverted', '⊙ Invert', '⊙ Invert');
+mkToggle('btn-pause',  'paused',   '▶ Resume', '⏸ Pause');
+mkToggle('btn-edge',   'edge',     '◈ Edge', '◈ Edge');
+mkToggle('btn-glow',   'glow',     '✦ Glow', '✦ Glow');
+mkToggle('btn-dither', 'dither',   '▒ Dither', '▒ Dither');
+document.getElementById('btn-glow').classList.add('on'); // glow on by default
+
+// ── Export: PNG ───────────────────────────────────────────────────────────────
+document.getElementById('exp-png').addEventListener('click', () => {
+  const el = asciiOut;
+  // Use html2canvas substitute: render text to a canvas with matching style
+  const fs = cfg.fontSize;
+  const charW = fs * 0.6, charH = fs;
+  const lines = currentASCII.split('\n');
+  const cols2 = lines[0]?.length || 0;
+  const rows2 = lines.length;
+
+  const exp = document.createElement('canvas');
+  exp.width  = cols2 * charW;
+  exp.height = rows2 * charH + 20;
+  const ec = exp.getContext('2d');
+
+  ec.fillStyle = '#080600';
+  ec.fillRect(0, 0, exp.width, exp.height);
+
+  const c = cfg.colorMode === 'amber' ? '#ffb000' :
+            cfg.colorMode === 'green'  ? '#39ff14' :
+            cfg.colorMode === 'cyan'   ? '#00ffe5' : '#dcdcdc';
+
+  ec.font = `${fs}px "Share Tech Mono", monospace`;
+  ec.fillStyle = c;
+  if (cfg.glow) { ec.shadowColor = c; ec.shadowBlur = 4; }
+
+  lines.forEach((line, row) => {
+    ec.fillText(line, 0, (row + 1) * charH);
+  });
+
+  // Watermark
+  ec.shadowBlur = 0;
+  ec.font = '10px "Share Tech Mono"';
+  ec.fillStyle = 'rgba(255,176,0,0.3)';
+  ec.fillText(`ASCII·CAM · ${new Date().toLocaleString()}`, 4, exp.height - 5);
+
+  exp.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `ascii_cam_${Date.now()}.png`;
+    a.click();
+  });
+});
+
+// ── Export: TXT ───────────────────────────────────────────────────────────────
+document.getElementById('exp-txt').addEventListener('click', () => {
+  const blob = new Blob([currentASCII], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ascii_cam_${Date.now()}.txt`;
+  a.click();
+});
+
+// ── Export: Copy ──────────────────────────────────────────────────────────────
+document.getElementById('exp-copy').addEventListener('click', () => {
+  navigator.clipboard.writeText(currentASCII).then(() => {
+    const btn = document.getElementById('exp-copy');
+    const orig = btn.textContent;
+    btn.textContent = '✓ COPIED TO CLIPBOARD';
+    btn.style.color = '#ffb000';
+    btn.style.borderColor = '#ffb000';
+    setTimeout(() => { btn.textContent = orig; btn.style.color=''; btn.style.borderColor=''; }, 1800);
+  });
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+window.addEventListener('load', async () => {
+  try {
+    // Set initial font
+    asciiOut.style.fontSize = `${cfg.fontSize}px`;
+    asciiOut.style.lineHeight = `${cfg.fontSize}px`;
+    await startCamera();
+  } catch(err) {
+    document.getElementById('loading').innerHTML = `
+      <div style="font-family:'VT323',monospace;font-size:2rem;color:#ffb000;letter-spacing:0.2em">CAMERA ERROR</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:0.6rem;color:#4a3800;margin-top:0.5rem;letter-spacing:0.1em">${err.message}</div>
+      <div style="font-family:'Share Tech Mono',monospace;font-size:0.55rem;color:#4a3800;margin-top:0.4rem">ALLOW CAMERA ACCESS AND RELOAD</div>`;
+  }
+});
+</script>
+</body>
+</html>
